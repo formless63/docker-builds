@@ -44,11 +44,9 @@ jobs:
           flavor: |
             latest=true
           tags: |
-            # Tag 1: The date (e.g., :2026-02-09)
-            type=schedule,pattern={{date 'YYYY-MM-DD'}}
-            # Tag 2: A backup date tag when triggered manually
-            type=date,pattern={{date 'YYYY-MM-DD'}}
-            # Tag 3: The SHA (e.g., :sha-8a7c1f)
+            # Tag 1: The date (e.g., :2026-02-09) - Works for manual AND schedule
+            type=raw,value={{date 'YYYY-MM-DD'}}
+            # Tag 2: The SHA (e.g., :sha-8a7c1f)
             type=sha,format=short
 
       - name: Build and push
