@@ -19,6 +19,15 @@ jobs:
           repository: itteco/iframely
           ref: dev
 
+      - name: Get latest tag
+        id: latesttag
+        run: |
+          git fetch --tags
+          echo "tag=$(git tag --sort=-version:refname | head -n 1)" >> $GITHUB_OUTPUT
+
+      - name: Checkout latest tag
+        run: git checkout ${{ steps.latesttag.outputs.tag }}
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
