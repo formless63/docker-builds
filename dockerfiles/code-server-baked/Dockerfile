@@ -85,19 +85,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && chown -R abc:abc /config /workspace \
  && git config --system init.defaultBranch main \
  && git config --system pull.rebase false \
- && printf '%s\n' \
-    'export HISTFILE=/config/shell/.bash_history' \
-    'export HISTSIZE=50000' \
-    'export HISTFILESIZE=50000' \
-    'shopt -s histappend' \
-    'PROMPT_COMMAND="history -a; history -c; history -r; $PROMPT_COMMAND"' \
-    'alias ll="ls -lah"' \
-    'alias gs="git status"' \
-    'alias gd="git diff"' \
-    'alias grep="grep --color=auto"' \
-    'alias cat="batcat --style=plain"' \
-    >> /etc/bash.bashrc \
- && apt-get clean \
+&& printf '%s\n' \
+  'export HISTFILE=/config/shell/.bash_history' \
+  'export HISTSIZE=50000' \
+  'export HISTFILESIZE=50000' \
+  'export HISTTIMEFORMAT="%F %T "' \
+  'shopt -s histappend' \
+  'PROMPT_COMMAND="history -a; history -n; $PROMPT_COMMAND"' \
+  'alias ll="ls -lah"' \
+  'alias gs="git status"' \
+  'alias gd="git diff"' \
+  'alias grep="grep --color=auto"' \
+  'alias cat="batcat --style=plain"' \
+  >> /etc/bash.bashrc \
+&& apt-get clean \
  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
-USER abc
