@@ -2,9 +2,15 @@ FROM lscr.io/linuxserver/code-server:latest
 
 USER root
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/config \
+    PATH=/config/.local/bin:/config/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PIPX_HOME=/config/.local/pipx \
+    PIPX_BIN_DIR=/config/.local/bin \
+    COMPOSER_HOME=/config/.composer \
+    NPM_CONFIG_PREFIX=/config/.npm-global
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
@@ -28,18 +34,13 @@ RUN apt-get update && apt-get install -y \
     dnsutils \
     rsync \
     openssh-client \
-    sudo \
     ripgrep \
     fd-find \
+    bat \
     tmux \
-    screen \
     make \
     build-essential \
     pkg-config \
-    software-properties-common \
-    gnupg \
-    lsb-release \
-    apt-transport-https \
     sqlite3 \
     postgresql-client \
     default-mysql-client \
@@ -68,31 +69,35 @@ RUN apt-get update && apt-get install -y \
     php-imagick \
     php-opcache \
     php-xdebug \
- && rm -rf /var/lib/apt/lists/*
-
-RUN npm install -g \
-    pnpm \
-    npm-check-updates \
-    eslint \
-    prettier \
-    typescript \
-    tsx
-
-RUN curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php \
+ && npm install -g pnpm npm-check-updates prettier eslint typescript tsx \
+ && curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php \
  && php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer \
- && rm -f /tmp/composer-setup.php
-
-RUN mkdir -p /config/.local/bin /config/.composer /config/.npm /config/.cache /workspace \
- && chown -R abc:abc /config /workspace
-
-ENV PATH="/config/.local/bin:/config/.npm-global/bin:${PATH}" \
-    PIPX_HOME="/config/.local/pipx" \
-    PIPX_BIN_DIR="/config/.local/bin" \
-    COMPOSER_HOME="/config/.composer" \
-    NPM_CONFIG_PREFIX="/config/.npm-global"
-
-RUN pipx ensurepath \
- && pipx install poetry \
- && pipx install uv
+ && rm -f /tmp/composer-setup.php \
+ && mkdir -p \
+    /config/.local/bin \
+    /config/.local/pipx \
+    /config/.composer \
+    /config/.npm \
+    /config/.npm-global \
+    /config/.cache \
+    /config/shell \
+    /workspace \
+ && chown -R abc:abc /config /workspace \
+ && git config --system init.defaultBranch main \
+ && git config --system pull.rebase false \
+ && printf '%s\n' \
+    'export HISTFILE=/config/shell/.bash_history' \
+    'export HISTSIZE=50000' \
+    'export HISTFILESIZE=50000' \
+    'shopt -s histappend' \
+    'PROMPT_COMMAND="history -a; history -c; history -r; $PROMPT_COMMAND"' \
+    'alias ll="ls -lah"' \
+    'alias gs="git status"' \
+    'alias gd="git diff"' \
+    'alias grep="grep --color=auto"' \
+    'alias cat="batcat --style=plain"' \
+    >> /etc/bash.bashrc \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 USER abc
