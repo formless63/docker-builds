@@ -3,7 +3,7 @@ name: Build SuperSync
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 4 * * *'
+    - cron: '0 5 */3 * *'
 
 env:
   REGISTRY: ghcr.io
