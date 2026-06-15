@@ -17,14 +17,16 @@ jobs:
       packages: write
 
     steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          path: _this_repo
+      
       - name: Checkout Upstream Repo
         uses: actions/checkout@v4
         with:
           repository: igorski/bitmappery
           ref: master
-
-      - name: Patch Dockerfile to use Node 24
-        run: sed -i -E 's/FROM node:[0-9]+/FROM node:24/g' dockerfile
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -56,7 +58,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: dockerfile
+          file: _this_repo/dockerfiles/bitmappery/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
