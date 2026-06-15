@@ -28,6 +28,9 @@ jobs:
           repository: igorski/bitmappery
           ref: master
 
+      - name: Use our Dockerfile
+        run: cp _this_repo/dockerfiles/bitmappery/Dockerfile dockerfile
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -58,7 +61,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: _this_repo/dockerfiles/bitmappery/Dockerfile
+          file: dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
