@@ -18,13 +18,13 @@ jobs:
 
     steps:
       - name: Checkout Upstream Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: igorski/bitmappery
           ref: master
       
       - name: Checkout this repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: _this_repo
       
