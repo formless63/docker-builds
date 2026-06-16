@@ -1,6 +1,6 @@
 # Written by Ange Cesari
 # Use official Node.js based on Alpine
-FROM node:20-alpine
+FROM node:24-alpine
 
 # Create dir for application
 WORKDIR /usr/src/app
