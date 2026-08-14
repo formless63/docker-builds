@@ -2,6 +2,11 @@ FROM lscr.io/linuxserver/code-server:latest
 
 USER root
 
+# /config is the volume linuxserver images persist, so it is the right home for
+# things a user installs at runtime (their pipx/composer/npm globals survive
+# restarts) but the wrong place to bake anything at build time: a user's
+# `-v ./config:/config` bind mount shadows whatever we put there. Tools we ship
+# go to /usr/local instead; the prefixes below are for runtime installs only.
 ENV DEBIAN_FRONTEND=noninteractive \
     HOME=/config \
     PATH=/config/.local/bin:/config/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -69,7 +74,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     php-imagick \
     php-opcache \
     php-xdebug \
- && npm install -g pnpm npm-check-updates prettier eslint typescript tsx \
+ && npm install -g --prefix /usr/local pnpm npm-check-updates prettier eslint typescript tsx \
+ && (phpdismod xdebug || echo "WARNING: could not disable xdebug") \
  && curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php \
  && php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer \
  && rm -f /tmp/composer-setup.php \
@@ -97,6 +103,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   'alias gd="git diff"' \
   'alias grep="grep --color=auto"' \
   'alias cat="batcat --style=plain"' \
+  'alias fd="fdfind"' \
   >> /etc/bash.bashrc \
 && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

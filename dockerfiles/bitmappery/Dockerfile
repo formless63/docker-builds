@@ -5,8 +5,9 @@ FROM node:24-alpine
 # Create dir for application
 WORKDIR /usr/src/app
 
-# Copy package.json
-COPY package.json ./
+# Copy package.json and the lockfile, so yarn resolves pinned versions rather
+# than whatever is newest at build time. The glob keeps the lockfile optional.
+COPY package.json yarn.lock* ./
 
 # Install dependencies
 RUN yarn install

@@ -12,6 +12,7 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
@@ -23,13 +24,22 @@ jobs:
           repository: igorski/bitmappery
           ref: master
       
+      - name: Record upstream revision
+        id: src
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout this repo
         uses: actions/checkout@v6
         with:
           path: _this_repo
-      
+
       - name: Use our Dockerfile
-        run: cp _this_repo/dockerfiles/bitmappery/Dockerfile dockerfile
+        run: |
+          set -euo pipefail
+          cp _this_repo/dockerfiles/bitmappery/Dockerfile dockerfile
+          # Keep our own checkout (and upstream build cruft) out of the image,
+          # since the Dockerfile does a bare `COPY . .`.
+          printf '%s\n' _this_repo .git node_modules dist > .dockerignore
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -54,8 +64,10 @@ jobs:
           tags: |
             # Tag 1: The date (e.g., :2026-02-10)
             type=raw,value={{date 'YYYY-MM-DD'}}
-            # Tag 2: The SHA (e.g., :sha-8a7c1f)
-            type=sha,format=short
+            # Tag 2: The upstream commit actually built. type=sha would use
+            # this repo's SHA, which is identical across every build and says
+            # nothing about the image contents.
+            type=raw,value=upstream-${{ steps.src.outputs.sha }}
 
       - name: Build and push
         uses: docker/build-push-action@v7
@@ -66,3 +78,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=bitmappery
+          cache-to: type=gha,mode=max,scope=bitmappery
