@@ -2,61 +2,39 @@ name: Build code-server-baked
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish validated images (main branch only)'
+        type: boolean
+        default: false
   schedule:
-    - cron: "0 5 * * 0" # Weekly, Sunday 5am
+    - cron: '0 5 * * 0'
   push:
+    branches: [main]
     paths:
-      - "dockerfiles/code-server-baked/**"
-      - ".github/workflows/code-server-baked.yaml"
+      - '.github/workflows/code-server-baked.yaml'
+      - '.github/workflows/build-image.yaml'
+      - 'scripts/**'
+      - 'dockerfiles/code-server-baked/**'
+  pull_request:
+    paths:
+      - '.github/workflows/code-server-baked.yaml'
+      - '.github/workflows/build-image.yaml'
+      - 'scripts/**'
+      - 'dockerfiles/code-server-baked/**'
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/code-server-baked
+permissions:
+  contents: read
+  packages: write
+
+# A newer run supersedes an older build before it can promote stale tags.
+concurrency:
+  group: image-code-server-baked-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          flavor: |
-            latest=true
-          tags: |
-            type=raw,value={{date 'YYYY-MM-DD'}}
-            type=sha,format=short
-
-      - name: Build and push
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./dockerfiles/code-server-baked/Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=code-server-baked
-          cache-to: type=gha,mode=max,scope=code-server-baked
+  build:
+    uses: ./.github/workflows/build-image.yaml
+    with:
+      target: code-server-baked
+      publish: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}

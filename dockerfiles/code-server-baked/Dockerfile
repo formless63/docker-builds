@@ -1,6 +1,8 @@
 FROM lscr.io/linuxserver/code-server:latest
 
 USER root
+ARG TARGETARCH
+ARG NODE_VERSION=24.19.0
 
 # /config is the volume linuxserver images persist, so it is the right home for
 # things a user installs at runtime (their pipx/composer/npm globals survive
@@ -55,8 +57,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     python3-dev \
     pipx \
-    nodejs \
-    npm \
     php-cli \
     php-common \
     php-curl \
@@ -74,10 +74,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     php-imagick \
     php-opcache \
     php-xdebug \
- && npm install -g --prefix /usr/local pnpm npm-check-updates prettier eslint typescript tsx \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+
+# Official Node binaries keep the CLI tools on a supported Node release rather
+# than the older distro Node. Verify the archive against official checksums.
+RUN case "$TARGETARCH" in amd64) node_arch=x64 ;; arm64) node_arch=arm64 ;; *) exit 1 ;; esac \
+ && node_archive="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
+ && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${node_archive}" -o "/tmp/${node_archive}" \
+ && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o /tmp/node-shasums \
+ && grep " ${node_archive}\$" /tmp/node-shasums > /tmp/node-selected-shasum \
+ && (cd /tmp && sha256sum -c node-selected-shasum) \
+ && tar -xJf "/tmp/${node_archive}" -C /usr/local --strip-components=1 \
+ && npm install -g --prefix /usr/local \
+    pnpm@12.9.1 npm-check-updates@23.1.0 prettier@3.9.9 \
+    eslint@10.12.0 typescript@7.0.2 tsx@4.23.15 \
+ && mkdir -p /usr/local/share/baked-tools \
+ && npm list -g --prefix /usr/local --depth=0 --json > /usr/local/share/baked-tools/npm.json \
+ && dpkg-query -W > /usr/local/share/baked-tools/dpkg.txt \
+ && node --version > /usr/local/share/baked-tools/node.txt \
  && (phpdismod xdebug || echo "WARNING: could not disable xdebug") \
  && curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php \
+ && curl -fsSL https://composer.github.io/installer.sig -o /tmp/composer-installer.sig \
+ && php -r 'if (hash_file("sha384", "/tmp/composer-setup.php") !== trim(file_get_contents("/tmp/composer-installer.sig"))) { fwrite(STDERR, "Composer installer checksum mismatch\n"); exit(1); }' \
  && php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer \
+ && composer --version > /usr/local/share/baked-tools/composer.txt \
  && rm -f /tmp/composer-setup.php \
  && mkdir -p \
     /config/.local/bin \
@@ -105,5 +126,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   'alias cat="batcat --style=plain"' \
   'alias fd="fdfind"' \
   >> /etc/bash.bashrc \
-&& apt-get clean \
- && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+ && rm -rf /tmp/* /var/tmp/* /config/.npm/_cacache /config/.npm/_logs

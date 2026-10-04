@@ -1,156 +1,38 @@
 name: Build iframely
+
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish validated images (main branch only)'
+        type: boolean
+        default: false
   schedule:
-    - cron: '0 4 * * 0'  # Weekly, Sunday 4am
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/iframely
+    - cron: '0 4 * * 0'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/iframely.yaml'
+      - '.github/workflows/build-image.yaml'
+      - 'scripts/**'
+  pull_request:
+    paths:
+      - '.github/workflows/iframely.yaml'
+      - '.github/workflows/build-image.yaml'
+      - 'scripts/**'
+
+permissions:
+  contents: read
+  packages: write
+
+# A newer run supersedes an older build before it can promote stale tags.
+concurrency:
+  group: image-iframely-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # Resolve the upstream release once, so both arch builds and the manifest
-  # merge agree on exactly which tag was built.
-  resolve:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      tag: ${{ steps.src.outputs.tag }}
-    steps:
-      - name: Checkout Upstream Repo
-        uses: actions/checkout@v6
-        with:
-          repository: itteco/iframely
-          ref: dev
-          fetch-depth: 0
-
-      - name: Get latest tag
-        id: src
-        run: |
-          set -euo pipefail
-          tag="$(git for-each-ref --sort=-version:refname --format='%(refname:short)' --count=1 refs/tags)"
-          if [ -z "$tag" ]; then
-            echo "::error::No tags found in itteco/iframely; refusing to fall back to dev"
-            exit 1
-          fi
-          echo "Building upstream tag $tag"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-  # Each architecture builds natively. iframely's pnpm install segfaults under
-  # QEMU emulation ("uncaught target signal 4"), and BuildKit hangs on it
-  # rather than failing, which burned the full 6h job limit on every run.
-  build-amd64:
-    needs: resolve
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-    steps:
-      - name: Checkout Upstream Repo
-        uses: actions/checkout@v6
-        with:
-          repository: itteco/iframely
-          ref: refs/tags/${{ needs.resolve.outputs.tag }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=iframely-amd64
-          cache-to: type=gha,mode=max,scope=iframely-amd64
-
-  build-arm64:
-    needs: resolve
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-    steps:
-      - name: Checkout Upstream Repo
-        uses: actions/checkout@v6
-        with:
-          repository: itteco/iframely
-          ref: refs/tags/${{ needs.resolve.outputs.tag }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/arm64
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=iframely-arm64
-          cache-to: type=gha,mode=max,scope=iframely-arm64
-
-  merge:
-    needs: [resolve, build-amd64, build-arm64]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          flavor: |
-            latest=true
-          tags: |
-            type=raw,value={{date 'YYYY-MM-DD'}}
-            # The upstream release actually built. github.sha would be this
-            # repo's commit, which says nothing about the image contents.
-            type=raw,value=${{ needs.resolve.outputs.tag }}
-
-      - name: Create multi-arch manifest
-        env:
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
-          ARM64_DIGEST: ${{ needs.build-arm64.outputs.digest }}
-        run: |
-          set -euo pipefail
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            "${IMAGE}@${AMD64_DIGEST}" \
-            "${IMAGE}@${ARM64_DIGEST}"
-
-      - name: Inspect
-        run: docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+  build:
+    uses: ./.github/workflows/build-image.yaml
+    with:
+      target: iframely
+      publish: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}

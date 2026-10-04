@@ -1,0 +1,178 @@
+name: Build and validate image
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+      publish:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      repository: ${{ steps.source.outputs.repository }}
+      revision: ${{ steps.source.outputs.revision }}
+      short: ${{ steps.source.outputs.short }}
+      version: ${{ steps.source.outputs.version }}
+      image: ${{ steps.source.outputs.image }}
+      matrix: ${{ steps.source.outputs.matrix }}
+      definition_revision: ${{ steps.definitions.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Record build definition revision
+        id: definitions
+        run: echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Resolve upstream commit
+        id: source
+        env:
+          TARGET: ${{ inputs.target }}
+          OWNER: ${{ github.repository_owner }}
+          REPOSITORY: ${{ github.repository }}
+          DEFINITION_REVISION: ${{ steps.definitions.outputs.revision }}
+        run: python3 scripts/resolve.py "$TARGET" --owner "$OWNER" --repository "$REPOSITORY" --definition-revision "$DEFINITION_REVISION"
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout exact upstream source
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.resolve.outputs.repository }}
+          ref: ${{ needs.resolve.outputs.revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout build definitions
+        uses: actions/checkout@v6
+        with:
+          path: _build
+          ref: ${{ needs.resolve.outputs.definition_revision }}
+          persist-credentials: false
+      - name: Prepare build context
+        id: prepare
+        env:
+          TARGET: ${{ inputs.target }}
+        run: python3 _build/scripts/prepare.py "$TARGET" --source . --definitions _build
+      - uses: docker/setup-buildx-action@v4
+      - name: Build native image for validation
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ steps.prepare.outputs.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: local/build-smoke:${{ inputs.target }}
+          build-args: |
+            VCS_REF=${{ steps.prepare.outputs.image_revision }}
+            BROWSER_WS_PORT=3001
+            BROWSER_HEALTH_PORT=3002
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.prepare.outputs.image_revision }}
+            io.github.formless63.upstream-revision=${{ needs.resolve.outputs.revision }}
+            io.github.formless63.build-revision=${{ needs.resolve.outputs.definition_revision }}
+            io.github.formless63.upstream=https://github.com/${{ needs.resolve.outputs.repository }}
+          cache-from: type=gha,scope=${{ inputs.target }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.target }}-${{ matrix.arch }}
+      - name: Functional smoke check
+        env:
+          TARGET: ${{ inputs.target }}
+        run: python3 _build/scripts/smoke.py "$TARGET" "local/build-smoke:$TARGET"
+      - name: Log in to GHCR after validation
+        if: inputs.publish
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the exact tested image as a candidate
+        if: inputs.publish
+        env:
+          IMAGE: ${{ needs.resolve.outputs.image }}
+          TARGET: ${{ inputs.target }}
+          CANDIDATE: ${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          docker tag "local/build-smoke:$TARGET" "$IMAGE:candidate-$CANDIDATE"
+          docker push "$IMAGE:candidate-$CANDIDATE"
+          digest="$(docker image inspect "$IMAGE:candidate-$CANDIDATE" --format '{{index .RepoDigests 0}}')"
+          [[ "$digest" == "$IMAGE@sha256:"* ]]
+          mkdir -p "$RUNNER_TEMP/digests"
+          printf '%s\n' "$digest" > "$RUNNER_TEMP/digests/${{ matrix.arch }}.txt"
+      - name: Save tested image digest
+        if: inputs.publish
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ inputs.target }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*.txt
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 2
+
+  publish:
+    if: inputs.publish
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ inputs.target }}-*
+          path: digests
+          merge-multiple: true
+      - name: Publish tags only after every architecture passes
+        env:
+          IMAGE: ${{ needs.resolve.outputs.image }}
+          TARGET: ${{ inputs.target }}
+          UPSTREAM_SHORT: ${{ needs.resolve.outputs.short }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          DEFINITION_REVISION: ${{ needs.resolve.outputs.definition_revision }}
+          MATRIX: ${{ needs.resolve.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          expected = {row['arch'] for row in json.loads(os.environ['MATRIX'])['include']}
+          files = list(Path('digests').glob('*.txt'))
+          assert {f.stem for f in files} == expected, 'Missing architecture digest'
+          for f in files:
+              import re
+              assert re.fullmatch(re.escape(os.environ['IMAGE']) + r'@sha256:[0-9a-f]{64}', f.read_text().strip())
+          PY
+          args=(-t "$IMAGE:latest" -t "$IMAGE:$(date -u +%F)" -t "$IMAGE:upstream-$UPSTREAM_SHORT")
+          if [[ "$TARGET" == code-server-baked ]]; then
+            args+=(-t "$IMAGE:sha-${DEFINITION_REVISION:0:7}")
+          fi
+          if [[ -n "$VERSION" ]]; then args+=(-t "$IMAGE:$VERSION"); fi
+          sources=()
+          for digest in digests/*.txt; do sources+=("$(cat "$digest")"); done
+          docker buildx imagetools create "${args[@]}" "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:latest"
