@@ -111,12 +111,17 @@ jobs:
           CANDIDATE: ${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
         run: |
           set -euo pipefail
-          docker tag "local/build-smoke:$TARGET" "$IMAGE:candidate-$CANDIDATE"
-          docker push "$IMAGE:candidate-$CANDIDATE"
-          digest="$(docker image inspect "$IMAGE:candidate-$CANDIDATE" --format '{{index .RepoDigests 0}}')"
-          [[ "$digest" == "$IMAGE@sha256:"* ]]
+          candidate="$IMAGE:candidate-$CANDIDATE"
+          docker tag "local/build-smoke:$TARGET" "$candidate"
+          docker push "$candidate"
+          # Read the digest from the registry. Local RepoDigests can contain other names.
+          digest="$(docker buildx imagetools inspect "$candidate" --format '{{.Manifest.Digest}}')"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Expected a SHA-256 manifest digest for $candidate, got: $digest" >&2
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/digests"
-          printf '%s\n' "$digest" > "$RUNNER_TEMP/digests/${{ matrix.arch }}.txt"
+          printf '%s@%s\n' "$IMAGE" "$digest" > "$RUNNER_TEMP/digests/${{ matrix.arch }}.txt"
       - name: Save tested image digest
         if: inputs.publish
         uses: actions/upload-artifact@v4
