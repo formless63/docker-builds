@@ -128,19 +128,26 @@ def smoke(target, image):
                 assert output == 'overridden-command-ok', 'Notice must preserve custom commands and support opt-out'
 
             elif target == 'iframely':
+                fixture_host = 'fixture.example.com'
+                fixture_url = f'http://{fixture_host}/'
                 config = Path(tmp) / 'config.local.js'
-                config.write_text('export default {host: "0.0.0.0", port: 8061, WHITELIST_URL: null, IGNORE_DOMAINS_RE: []};\n')
+                # Iframely trusts configured infrastructure hostnames in its DNS guard.
+                # Register only the local fixture in this temporary smoke-test config.
+                config.write_text('export default ' + json.dumps({
+                    'host': '0.0.0.0', 'port': 8061, 'WHITELIST_URL': None,
+                    'PROXY_URL': fixture_url,
+                }) + ';\n')
                 config.chmod(0o644)
                 fixture_js = ('require("http").createServer((req,res)=>{res.setHeader("Content-Type","text/html");'
                               'res.end("<html><head><title>Build smoke fixture</title><meta property=\\\"og:title\\\" '
                               'content=\\\"Build smoke fixture\\\"></head><body>Fixture</body></html>");}).listen(80,"0.0.0.0")')
-                fixture = run('fixture', '--network-alias', 'fixture.example.com', '--user', '0', '--entrypoint', 'node', image, '-e', fixture_js)
+                fixture = run('fixture', '--network-alias', fixture_host, '--user', '0', '--entrypoint', 'node', image, '-e', fixture_js)
                 wait_for(lambda: docker('exec', fixture, 'node', '-e',
                                         'fetch("http://127.0.0.1/").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))'))
                 app = run('app', '-v', f'{config}:/iframely/config.local.js:ro',
-                          '-e', 'NO_PROXY=localhost,127.0.0.1,fixture.example.com',
+                          '-e', f'NO_PROXY=localhost,127.0.0.1,{fixture_host}',
                           '-p', '127.0.0.1::8061', image)
-                endpoint = address(app, 8061) + '/iframely?url=' + urllib.parse.quote('http://fixture.example.com/', safe='')
+                endpoint = address(app, 8061) + '/iframely?url=' + urllib.parse.quote(fixture_url, safe='')
                 result = wait_for(lambda: json.loads(request(endpoint)))
                 assert result['meta']['title'] == 'Build smoke fixture', result
 
